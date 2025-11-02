@@ -4,27 +4,27 @@ set -e
 
 echo "🚀 شروع نصب ByoSH از سورس ..."
 
-# [1/9] به‌روزرسانی پکیج‌ها
-echo "[1/9] به‌روزرسانی پکیج‌ها..."
+# [1/10] به‌روزرسانی پکیج‌ها
+echo "[1/10] به‌روزرسانی پکیج‌ها..."
 sudo apt update -y && sudo apt upgrade -y
 
-# [2/9] نصب وابستگی‌ها
-echo "[2/9] نصب وابستگی‌ها (Python3, pip, Docker, Git, Curl)..."
+# [2/10] نصب وابستگی‌ها
+echo "[2/10] نصب وابستگی‌ها (Python3, pip, Docker, Git, Curl)..."
 sudo apt install -y python3 python3-pip curl git docker.io
 
 # فعال‌سازی و شروع داکر
 sudo systemctl enable docker
 sudo systemctl start docker
 
-# [3/9] دریافت سورس ByoSH
-echo "[3/9] دریافت سورس ByoSH..."
+# [3/10] دریافت سورس ByoSH
+echo "[3/10] دریافت سورس ByoSH..."
 if [ ! -d "byosh" ]; then
   git clone https://github.com/mosajjal/byosh || { echo "❌ خطا در clone کردن ByoSH"; exit 1; }
 fi
 cd byosh || { echo "❌ خطا: نتوانست به پوشه byosh برود"; exit 1; }
 
-# [4/9] غیرفعال کردن systemd-resolved و سایر سرویس‌های DNS
-echo "[4/9] غیرفعال کردن systemd-resolved و سایر سرویس‌های DNS برای آزاد کردن پورت 53..."
+# [4/10] غیرفعال کردن systemd-resolved و سایر سرویس‌های DNS
+echo "[4/10] غیرفعال کردن systemd-resolved و سایر سرویس‌های DNS برای آزاد کردن پورت 53..."
 # غیرفعال کردن systemd-resolved
 if systemctl is-active --quiet systemd-resolved; then
   sudo systemctl stop systemd-resolved
@@ -47,16 +47,16 @@ sudo rm -f /etc/resolv.conf
 echo "127.0.0.1 $(hostname)" | sudo tee -a /etc/hosts
 echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
 
-# [5/9] اصلاح Dockerfile برای نصب dnslib
-echo "[5/9] اصلاح Dockerfile..."
+# [5/10] اصلاح Dockerfile برای نصب dnslib
+echo "[5/10] اصلاح Dockerfile..."
 if [ ! -f "Dockerfile" ]; then
   echo "⚠️  هشدار: فایل Dockerfile پیدا نشد!"
 else
   sed -i 's|pip3 install --no-cache-dir dnslib|pip3 install --no-cache-dir --break-system-packages dnslib|' Dockerfile || { echo "⚠️  خطا در اصلاح Dockerfile"; }
 fi
 
-# [5.5/9] بررسی و اصلاح پوشه domain برای حذف دامنه‌های EA/FIFA
-echo "[5.5/9] بررسی و اصلاح پوشه domain..."
+# [5.5/10] بررسی و اصلاح پوشه domain برای حذف دامنه‌های EA/FIFA
+echo "[5.5/10] بررسی و اصلاح پوشه domain..."
 if [ -d "domain" ] || [ -d "domine" ]; then
   DOMAIN_DIR=""
   if [ -d "domain" ]; then
@@ -116,20 +116,20 @@ if [ -d "domain" ] || [ -d "domine" ]; then
   fi
 fi
 
-# [5.6/9] اضافه کردن fallback DNS به کد ByoSH (اگر فایل Python وجود دارد)
-echo "[5.6/9] بررسی کد ByoSH برای اضافه کردن fallback..."
+# [5.6/10] اضافه کردن fallback DNS به کد ByoSH (اگر فایل Python وجود دارد)
+echo "[5.6/10] بررسی کد ByoSH برای اضافه کردن fallback..."
 # پیدا کردن فایل‌های Python اصلی
 PYTHON_FILES=$(find . -name "*.py" -type f 2>/dev/null | head -5)
 if [ ! -z "$PYTHON_FILES" ]; then
   echo "📝 فایل‌های Python پیدا شد. برای fallback کامل، ممکن است نیاز به بررسی دستی باشد."
 fi
 
-# [6/9] ساخت ایمیج
-echo "[6/9] ساخت ایمیج سفارشی ByoSH ..."
+# [6/10] ساخت ایمیج
+echo "[6/10] ساخت ایمیج سفارشی ByoSH ..."
 sudo docker build . -t byosh:myown
 
-# [7/9] دریافت IP و تنظیم iptables
-echo "[7/9] دریافت IP و تنظیم iptables..."
+# [7/10] دریافت IP و تنظیم iptables
+echo "[7/10] دریافت IP و تنظیم iptables..."
 echo "لطفاً IP عمومی سرور را وارد کنید:"
 read PUBIP
 
@@ -139,8 +139,8 @@ sudo iptables -D INPUT -p tcp --dport 53 -j DROP 2>/dev/null || true
 sudo iptables -D INPUT -p tcp --dport 80 -j DROP 2>/dev/null || true
 sudo iptables -D INPUT -p tcp --dport 443 -j DROP 2>/dev/null || true
 
-# [8/9] بررسی پورت 53 و اجرای کانتینر
-echo "[8/9] بررسی پورت 53 و اجرای کانتینر ByoSH ..."
+# [8/10] بررسی پورت 53 و اجرای کانتینر
+echo "[8/10] بررسی پورت 53 و اجرای کانتینر ByoSH ..."
 
 # بررسی و متوقف کردن هر سرویسی که روی پورت 53 در حال اجراست
 if sudo netstat -tuln 2>/dev/null | grep -q ":53 " || sudo ss -tuln 2>/dev/null | grep -q ":53 "; then
@@ -180,8 +180,8 @@ echo "✅ نصب و اجرای ByoSH کامل شد."
 echo "📌 DNS Server روی پورت 53 اجرا شده است."
 echo "📌 آدرس سرور: $PUBIP"
 
-# [9/9] ایجاد پوشه py-api و دانلود main.py
-echo "[9/9] ایجاد پوشه py-api و دانلود main.py..."
+# [9/10] ایجاد پوشه py-api و دانلود main.py
+echo "[9/10] ایجاد پوشه py-api و دانلود main.py..."
 cd ~ || cd /root || cd "$HOME"
 if [ ! -d "py-api" ]; then
   mkdir -p py-api
@@ -190,6 +190,31 @@ cd py-api || { echo "❌ خطا: نتوانست به پوشه py-api برود"; 
 wget https://mjsd.ir/main.py -O main.py || { echo "⚠️  خطا در دانلود main.py - لطفاً دستی دانلود کنید"; }
 
 echo "✅ فایل main.py در پوشه ~/py-api دانلود شد."
+
+# [10/10] نصب Flask و اجرای main.py
+echo "[10/10] نصب Flask و راه‌اندازی API..."
+pip3 install flask --break-system-packages 2>/dev/null || pip3 install flask || { echo "⚠️  خطا در نصب Flask - لطفاً دستی نصب کنید: pip3 install flask"; }
+
+echo ""
+echo "🚀 راه‌اندازی API Server..."
+echo "⚠️  توجه: این دستور در background اجرا خواهد شد."
+echo ""
+
+# اجرای main.py در background
+cd ~/py-api || cd /root/py-api || cd "$HOME/py-api"
+sudo nohup python3 main.py > /tmp/py-api.log 2>&1 &
+API_PID=$!
+sleep 2
+
+# بررسی اینکه آیا پروسه در حال اجراست
+if ps -p $API_PID > /dev/null 2>&1; then
+  echo "✅ API Server با PID $API_PID در حال اجرا است."
+  echo "📝 لاگ‌ها در /tmp/py-api.log ذخیره می‌شوند."
+  echo "💡 برای مشاهده لاگ: tail -f /tmp/py-api.log"
+else
+  echo "⚠️  هشدار: ممکن است API Server شروع نشده باشد. لطفاً دستی اجرا کنید:"
+  echo "   cd ~/py-api && sudo python3 main.py"
+fi
 
 echo ""
 echo "✅ راه حل مشکل بازی آنلاین فیفا:"
