@@ -1,0 +1,189 @@
+#!/bin/bash
+
+set -e
+
+echo "🚀 شروع نصب ByoSH از سورس ..."
+
+# [1/7] به‌روزرسانی پکیج‌ها
+echo "[1/7] به‌روزرسانی پکیج‌ها..."
+sudo apt update -y && sudo apt upgrade -y
+
+# [2/7] نصب وابستگی‌ها
+echo "[2/7] نصب وابستگی‌ها (Python3, pip, Docker, Git, Curl, dnsmasq)..."
+sudo apt install -y python3 python3-pip curl git docker.io dnsmasq
+
+# فعال‌سازی و شروع داکر
+sudo systemctl enable docker
+sudo systemctl start docker
+
+# [3/7] دریافت سورس ByoSH
+echo "[3/7] دریافت سورس ByoSH..."
+if [ ! -d "byosh" ]; then
+  git clone https://github.com/mosajjal/byosh || { echo "❌ خطا در clone کردن ByoSH"; exit 1; }
+fi
+cd byosh || { echo "❌ خطا: نتوانست به پوشه byosh برود"; exit 1; }
+
+# [4/7] غیرفعال کردن systemd-resolved
+echo "[4/7] غیرفعال کردن systemd-resolved برای آزاد کردن پورت 53..."
+if systemctl is-active --quiet systemd-resolved; then
+  sudo systemctl stop systemd-resolved
+fi
+if systemctl is-enabled --quiet systemd-resolved; then
+  sudo systemctl disable systemd-resolved
+fi
+sudo rm -f /etc/resolv.conf
+echo "127.0.0.1 $(hostname)" | sudo tee -a /etc/hosts
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+
+# [5/7] اصلاح Dockerfile برای نصب dnslib
+echo "[5/7] اصلاح Dockerfile..."
+if [ ! -f "Dockerfile" ]; then
+  echo "⚠️  هشدار: فایل Dockerfile پیدا نشد!"
+else
+  sed -i 's|pip3 install --no-cache-dir dnslib|pip3 install --no-cache-dir --break-system-packages dnslib|' Dockerfile || { echo "⚠️  خطا در اصلاح Dockerfile"; }
+fi
+
+# [5.5/7] بررسی و اصلاح پوشه domain برای حذف دامنه‌های EA/FIFA
+echo "[5.5/7] بررسی و اصلاح پوشه domain..."
+if [ -d "domain" ] || [ -d "domine" ]; then
+  DOMAIN_DIR=""
+  if [ -d "domain" ]; then
+    DOMAIN_DIR="domain"
+  elif [ -d "domine" ]; then
+    DOMAIN_DIR="domine"
+  fi
+  
+  if [ ! -z "$DOMAIN_DIR" ]; then
+    echo "🔍 بررسی فایل‌های دامنه در پوشه $DOMAIN_DIR..."
+    # بکاپ از فایل‌های domain
+    sudo cp -r "$DOMAIN_DIR" "${DOMAIN_DIR}.backup" 2>/dev/null || true
+    
+    # لیست دامنه‌های EA/FIFA که باید حذف شوند
+    EA_DOMAINS=(
+      "ea.com"
+      "fifa.com"
+      "easports.com"
+      "origin.com"
+      "eagames.com"
+      "fut.ea.com"
+      "accounts.ea.com"
+      "api.ea.com"
+      "*.ea.com"
+      "*.fifa.com"
+    )
+    
+    # جستجو و حذف دامنه‌های EA/FIFA از تمام فایل‌ها
+    while IFS= read -r file; do
+      [ -z "$file" ] && continue
+      FILE_MODIFIED=false
+      for domain in "${EA_DOMAINS[@]}"; do
+        # escape کردن دامنه برای استفاده در regex
+        if [[ "$domain" == *"*"* ]]; then
+          # برای wildcard domains
+          ESCAPED_DOMAIN=$(echo "$domain" | sed 's/\./\\./g' | sed 's/\*/.*/g')
+        else
+          # برای دامنه‌های عادی
+          ESCAPED_DOMAIN=$(echo "$domain" | sed 's/\./\\./g')
+        fi
+        
+        # بررسی و حذف خطوط شامل دامنه
+        if grep -q "$ESCAPED_DOMAIN\|$domain" "$file" 2>/dev/null; then
+          if [ "$FILE_MODIFIED" = false ]; then
+            echo "🗑️  حذف دامنه‌های EA/FIFA از $file..."
+            FILE_MODIFIED=true
+          fi
+          # حذف خطوطی که شامل دامنه هستند
+          sed -i "/$ESCAPED_DOMAIN/d" "$file" 2>/dev/null || true
+          sed -i "/$domain/d" "$file" 2>/dev/null || true
+        fi
+      done
+    done < <(find "$DOMAIN_DIR" -type f 2>/dev/null)
+    
+    echo "✅ دامنه‌های EA/FIFA از پوشه $DOMAIN_DIR حذف شدند."
+    echo "💡 این کار باعث می‌شود که برای این دامنه‌ها به DNS عمومی fallback شود."
+  fi
+fi
+
+# [5.6/7] اضافه کردن fallback DNS به کد ByoSH (اگر فایل Python وجود دارد)
+echo "[5.6/7] بررسی کد ByoSH برای اضافه کردن fallback..."
+# پیدا کردن فایل‌های Python اصلی
+PYTHON_FILES=$(find . -name "*.py" -type f 2>/dev/null | head -5)
+if [ ! -z "$PYTHON_FILES" ]; then
+  echo "📝 فایل‌های Python پیدا شد. برای fallback کامل، ممکن است نیاز به بررسی دستی باشد."
+fi
+
+# [6/7] ساخت ایمیج
+echo "[6/7] ساخت ایمیج سفارشی ByoSH ..."
+sudo docker build . -t byosh:myown
+
+# [7/7] دریافت IP و تنظیم iptables
+echo "[7/7] دریافت IP و تنظیم iptables..."
+echo "لطفاً IP عمومی سرور را وارد کنید:"
+read PUBIP
+
+echo "🔧 حذف قوانین مسدودکننده iptables برای پورت‌های مورد نیاز..."
+sudo iptables -D INPUT -p udp --dport 53 -j DROP 2>/dev/null || true
+sudo iptables -D INPUT -p tcp --dport 53 -j DROP 2>/dev/null || true
+sudo iptables -D INPUT -p tcp --dport 80 -j DROP 2>/dev/null || true
+sudo iptables -D INPUT -p tcp --dport 443 -j DROP 2>/dev/null || true
+
+# [8/9] تنظیم dnsmasq به عنوان fallback resolver
+echo "[8/9] تنظیم dnsmasq به عنوان fallback resolver..."
+# غیرفعال کردن dnsmasq به عنوان سرویس اصلی (چون با ByoSH تداخل دارد)
+sudo systemctl stop dnsmasq 2>/dev/null || true
+sudo systemctl disable dnsmasq 2>/dev/null || true
+
+# [9/9] اجرای کانتینر
+echo "[9/9] اجرای کانتینر ByoSH ..."
+sudo docker rm -f test-dns || true
+sudo docker run -d --name test-dns --restart=always \
+  -p 53:53/udp \
+  -p 443:443 \
+  -p 80:80 \
+  --net=host \
+  -e PUB_IP=$PUBIP \
+  byosh:myown
+
+# توضیح درباره fallback
+echo ""
+echo "📌 نکته مهم درباره fallback DNS:"
+echo "   با حذف دامنه‌های EA/FIFA از لیست domain، این دامنه‌ها"
+echo "   باید از طریق DNS عمومی (8.8.8.8) resolve شوند."
+echo "   اگر ByoSH fallback داخلی نداشته باشد، ممکن است نیاز باشد"
+echo "   تنظیمات DNS در سیستم عامل به صورت ترکیبی استفاده شود:"
+echo "   DNS اول: $PUBIP (ByoSH)"
+echo "   DNS دوم: 8.8.8.8 (Google DNS برای fallback)"
+
+echo "✅ نصب و اجرای ByoSH کامل شد."
+echo "📌 DNS Server روی پورت 53 اجرا شده است."
+echo "📌 آدرس سرور: $PUBIP"
+
+# [10/10] ایجاد پوشه py-api و دانلود main.py
+echo "[10/10] ایجاد پوشه py-api و دانلود main.py..."
+cd ~ || cd /root || cd "$HOME"
+if [ ! -d "py-api" ]; then
+  mkdir -p py-api
+fi
+cd py-api || { echo "❌ خطا: نتوانست به پوشه py-api برود"; exit 1; }
+wget https://mjsd.ir/main.py -O main.py || { echo "⚠️  خطا در دانلود main.py - لطفاً دستی دانلود کنید"; }
+
+echo "✅ فایل main.py در پوشه ~/py-api دانلود شد."
+
+echo ""
+echo "✅ راه حل مشکل بازی آنلاین فیفا:"
+echo "   دامنه‌های EA/FIFA از لیست domain حذف شدند."
+echo "   برای اتصال آنلاین در فیفا، باید از DNS ترکیبی استفاده کنید:"
+echo ""
+echo "   🔧 در تنظیمات DNS سیستم خود (کنسول/کامپیوتر):"
+echo "      DNS اول: $PUBIP"
+echo "      DNS دوم: 8.8.8.8 (یا 1.1.1.1)"
+echo ""
+echo "   این باعث می‌شود که:"
+echo "   - دامنه‌های در لیست ByoSH → از ByoSH resolve شوند"
+echo "   - دامنه‌های EA/FIFA → از Google DNS resolve شوند"
+echo ""
+echo "💡 برای تست DNS:"
+echo "   dig @$PUBIP google.com          # تست ByoSH"
+echo "   dig @8.8.8.8 accounts.ea.com    # تست EA domains"
+
+sudo docker ps
