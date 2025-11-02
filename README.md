@@ -13,13 +13,13 @@
 ## 🎯 نصب سریع (یک خطی)
 
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/YOUR_USERNAME/trondns/main/install_byosh.sh)
+bash <(curl -s https://raw.githubusercontent.com/asanseir724/trondns/main/install_byosh.sh)
 ```
 
 یا:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/YOUR_USERNAME/trondns/main/install_byosh.sh | bash
+wget -qO- https://raw.githubusercontent.com/asanseir724/trondns/main/install_byosh.sh | bash
 ```
 
 **نکته**: `YOUR_USERNAME` را با نام کاربری گیت‌هاب خود جایگزین کنید.
@@ -33,7 +33,7 @@ wget -qO- https://raw.githubusercontent.com/YOUR_USERNAME/trondns/main/install_b
 ## 🔧 نصب دستی
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/trondns.git
+git clone https://github.com/asanseir724/trondns.git
 cd trondns
 chmod +x install_byosh.sh
 sudo ./install_byosh.sh
@@ -132,4 +132,5 @@ sudo systemctl start docker
 ---
 
 **توجه**: این پروژه برای استفاده آموزشی و تحقیقاتی است. استفاده از آن به عهده خود کاربر است.
+
 
