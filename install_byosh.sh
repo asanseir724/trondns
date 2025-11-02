@@ -180,16 +180,42 @@ echo "✅ نصب و اجرای ByoSH کامل شد."
 echo "📌 DNS Server روی پورت 53 اجرا شده است."
 echo "📌 آدرس سرور: $PUBIP"
 
-# [9/10] ایجاد پوشه py-api و دانلود main.py
-echo "[9/10] ایجاد پوشه py-api و دانلود main.py..."
+# [9/10] ایجاد پوشه py-api و کپی main.py
+echo "[9/10] ایجاد پوشه py-api و کپی main.py..."
 cd ~ || cd /root || cd "$HOME"
 if [ ! -d "py-api" ]; then
   mkdir -p py-api
 fi
-cd py-api || { echo "❌ خطا: نتوانست به پوشه py-api برود"; exit 1; }
-wget https://mjsd.ir/main.py -O main.py || { echo "⚠️  خطا در دانلود main.py - لطفاً دستی دانلود کنید"; }
 
-echo "✅ فایل main.py در پوشه ~/py-api دانلود شد."
+# دانلود main.py از گیت‌هاب (از پوشه py-api در ریپازیتوری)
+echo "📥 دانلود main.py از گیت‌هاب..."
+cd py-api || { echo "❌ خطا: نتوانست به پوشه py-api برود"; exit 1; }
+
+# استفاده از همان ریپازیتوری که اسکریپت از آن اجرا می‌شود
+# اگر GITHUB_USER و GITHUB_REPO تعریف شده باشند، استفاده می‌کنیم
+GITHUB_USER="${GITHUB_USER:-asanseir724}"
+GITHUB_REPO="${GITHUB_REPO:-trondns}"
+GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
+
+# تلاش برای دانلود از گیت‌هاب
+wget -q "https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH/py-api/main.py" -O main.py 2>/dev/null || \
+curl -sL "https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/$GITHUB_BRANCH/py-api/main.py" -o main.py 2>/dev/null || {
+  echo "⚠️  خطا در دانلود از گیت‌هاب. تلاش با لینک اصلی..."
+  wget -q https://mjsd.ir/main.py -O main.py || { 
+    echo "❌ خطا: نتوانست main.py را دانلود کند"
+    echo "💡 لطفاً دستی دانلود کنید:"
+    echo "   cd ~/py-api"
+    echo "   wget https://mjsd.ir/main.py -O main.py"
+    exit 1
+  }
+}
+
+if [ -f main.py ]; then
+  echo "✅ فایل main.py در پوشه ~/py-api دانلود شد."
+else
+  echo "❌ خطا: فایل main.py پیدا نشد!"
+  exit 1
+fi
 
 # [10/10] نصب Flask و اجرای main.py
 echo "[10/10] نصب Flask و راه‌اندازی API..."
@@ -197,6 +223,25 @@ pip3 install flask --break-system-packages 2>/dev/null || pip3 install flask || 
 
 echo ""
 echo "🚀 راه‌اندازی API Server..."
+
+# بررسی و متوقف کردن API Server قبلی (اگر در حال اجرا باشد)
+if pgrep -f "python3.*main.py" > /dev/null; then
+  OLD_PID=$(pgrep -f "python3.*main.py")
+  echo "⚠️  API Server قبلی با PID $OLD_PID پیدا شد. متوقف کردن..."
+  kill $OLD_PID 2>/dev/null || sudo kill $OLD_PID 2>/dev/null || true
+  sleep 2
+fi
+
+# بررسی پورت 5000
+if sudo netstat -tuln 2>/dev/null | grep -q ":5000 " || sudo ss -tuln 2>/dev/null | grep -q ":5000 "; then
+  PORT_PID=$(sudo lsof -ti:5000 2>/dev/null | head -1 || sudo fuser 5000/tcp 2>/dev/null | awk '{print $2}')
+  if [ ! -z "$PORT_PID" ]; then
+    echo "⚠️  پورت 5000 توسط پروسه $PORT_PID اشغال است. متوقف کردن..."
+    sudo kill $PORT_PID 2>/dev/null || true
+    sleep 2
+  fi
+fi
+
 echo "⚠️  توجه: این دستور در background اجرا خواهد شد."
 echo ""
 
@@ -204,20 +249,44 @@ echo ""
 cd ~/py-api || cd /root/py-api || cd "$HOME/py-api"
 sudo nohup python3 main.py > /tmp/py-api.log 2>&1 &
 API_PID=$!
-sleep 2
+sleep 3
 
 # بررسی اینکه آیا پروسه در حال اجراست
 if ps -p $API_PID > /dev/null 2>&1; then
   echo "✅ API Server با PID $API_PID در حال اجرا است."
   echo "📝 لاگ‌ها در /tmp/py-api.log ذخیره می‌شوند."
   echo "💡 برای مشاهده لاگ: tail -f /tmp/py-api.log"
+  echo "💡 برای متوقف کردن: kill $API_PID"
 else
-  echo "⚠️  هشدار: ممکن است API Server شروع نشده باشد. لطفاً دستی اجرا کنید:"
-  echo "   cd ~/py-api && sudo python3 main.py"
+  # بررسی لاگ برای خطا
+  if grep -q "Address already in use\|Port.*is in use" /tmp/py-api.log 2>/dev/null; then
+    echo "❌ خطا: پورت 5000 هنوز در حال استفاده است."
+    echo "💡 لطفاً دستی بررسی کنید:"
+    echo "   sudo lsof -i:5000"
+    echo "   یا"
+    echo "   sudo netstat -tulpn | grep 5000"
+    echo "   سپس پروسه را متوقف کنید و دوباره تلاش کنید."
+  else
+    echo "⚠️  هشدار: ممکن است API Server شروع نشده باشد."
+    echo "💡 برای مشاهده خطاها: cat /tmp/py-api.log"
+    echo "💡 برای اجرای دستی: cd ~/py-api && sudo python3 main.py"
+  fi
 fi
 
 echo ""
-echo "✅ راه حل مشکل بازی آنلاین فیفا:"
+echo "═══════════════════════════════════════════════════════════"
+echo "✅ نصب و راه‌اندازی کامل شد!"
+echo "═══════════════════════════════════════════════════════════"
+echo ""
+echo "🌐 DNS Server:"
+echo "   IP: $PUBIP"
+echo "   پورت: 53 (UDP)"
+echo ""
+echo "🔗 API Server:"
+echo "   URL: http://$PUBIP:5000"
+echo "   لاگ: /tmp/py-api.log"
+echo ""
+echo "📋 راه حل مشکل بازی آنلاین فیفا:"
 echo "   دامنه‌های EA/FIFA از لیست domain حذف شدند."
 echo "   برای اتصال آنلاین در فیفا، باید از DNS ترکیبی استفاده کنید:"
 echo ""
@@ -229,8 +298,18 @@ echo "   این باعث می‌شود که:"
 echo "   - دامنه‌های در لیست ByoSH → از ByoSH resolve شوند"
 echo "   - دامنه‌های EA/FIFA → از Google DNS resolve شوند"
 echo ""
-echo "💡 برای تست DNS:"
-echo "   dig @$PUBIP google.com          # تست ByoSH"
-echo "   dig @8.8.8.8 accounts.ea.com    # تست EA domains"
+echo "💡 دستورات مفید:"
+echo "   # تست DNS:"
+echo "   dig @$PUBIP google.com"
+echo "   dig @8.8.8.8 accounts.ea.com"
+echo ""
+echo "   # مشاهده وضعیت:"
+echo "   sudo docker ps"
+echo "   ps aux | grep main.py"
+echo ""
+echo "   # مشاهده لاگ API:"
+echo "   tail -f /tmp/py-api.log"
+echo ""
+echo "═══════════════════════════════════════════════════════════"
 
 sudo docker ps
