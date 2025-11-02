@@ -9,8 +9,8 @@ echo "[1/7] به‌روزرسانی پکیج‌ها..."
 sudo apt update -y && sudo apt upgrade -y
 
 # [2/7] نصب وابستگی‌ها
-echo "[2/7] نصب وابستگی‌ها (Python3, pip, Docker, Git, Curl, dnsmasq)..."
-sudo apt install -y python3 python3-pip curl git docker.io dnsmasq
+echo "[2/7] نصب وابستگی‌ها (Python3, pip, Docker, Git, Curl)..."
+sudo apt install -y python3 python3-pip curl git docker.io
 
 # فعال‌سازی و شروع داکر
 sudo systemctl enable docker
@@ -23,14 +23,26 @@ if [ ! -d "byosh" ]; then
 fi
 cd byosh || { echo "❌ خطا: نتوانست به پوشه byosh برود"; exit 1; }
 
-# [4/7] غیرفعال کردن systemd-resolved
-echo "[4/7] غیرفعال کردن systemd-resolved برای آزاد کردن پورت 53..."
+# [4/7] غیرفعال کردن systemd-resolved و سایر سرویس‌های DNS
+echo "[4/7] غیرفعال کردن systemd-resolved و سایر سرویس‌های DNS برای آزاد کردن پورت 53..."
+# غیرفعال کردن systemd-resolved
 if systemctl is-active --quiet systemd-resolved; then
   sudo systemctl stop systemd-resolved
 fi
 if systemctl is-enabled --quiet systemd-resolved; then
   sudo systemctl disable systemd-resolved
 fi
+
+# غیرفعال کردن dnsmasq (اگر نصب شده باشد)
+if command -v dnsmasq &> /dev/null || systemctl list-unit-files 2>/dev/null | grep -q dnsmasq.service; then
+  echo "🔧 غیرفعال کردن dnsmasq..."
+  sudo systemctl stop dnsmasq 2>/dev/null || true
+  sudo systemctl disable dnsmasq 2>/dev/null || true
+  # همچنین از mask استفاده می‌کنیم تا حتی در صورت enable شدن هم start نشود
+  sudo systemctl mask dnsmasq 2>/dev/null || true
+fi
+
+# تنظیم resolv.conf
 sudo rm -f /etc/resolv.conf
 echo "127.0.0.1 $(hostname)" | sudo tee -a /etc/hosts
 echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
@@ -127,14 +139,24 @@ sudo iptables -D INPUT -p tcp --dport 53 -j DROP 2>/dev/null || true
 sudo iptables -D INPUT -p tcp --dport 80 -j DROP 2>/dev/null || true
 sudo iptables -D INPUT -p tcp --dport 443 -j DROP 2>/dev/null || true
 
-# [8/9] تنظیم dnsmasq به عنوان fallback resolver
-echo "[8/9] تنظیم dnsmasq به عنوان fallback resolver..."
-# غیرفعال کردن dnsmasq به عنوان سرویس اصلی (چون با ByoSH تداخل دارد)
-sudo systemctl stop dnsmasq 2>/dev/null || true
-sudo systemctl disable dnsmasq 2>/dev/null || true
+# [8/9] بررسی پورت 53 و اجرای کانتینر
+echo "[8/9] بررسی پورت 53 و اجرای کانتینر ByoSH ..."
 
-# [9/9] اجرای کانتینر
-echo "[9/9] اجرای کانتینر ByoSH ..."
+# بررسی و متوقف کردن هر سرویسی که روی پورت 53 در حال اجراست
+if sudo netstat -tuln 2>/dev/null | grep -q ":53 " || sudo ss -tuln 2>/dev/null | grep -q ":53 "; then
+  echo "⚠️  پورت 53 در حال استفاده است. متوقف کردن سرویس‌های DNS..."
+  
+  # متوقف کردن تمام سرویس‌های DNS ممکن
+  sudo systemctl stop dnsmasq 2>/dev/null || true
+  sudo systemctl stop systemd-resolved 2>/dev/null || true
+  sudo systemctl stop bind9 2>/dev/null || true
+  sudo systemctl stop named 2>/dev/null || true
+  
+  # اگر کانتینر قبلی وجود دارد، آن را متوقف می‌کنیم
+  sudo docker stop test-dns 2>/dev/null || true
+  sleep 2
+fi
+
 sudo docker rm -f test-dns || true
 sudo docker run -d --name test-dns --restart=always \
   -p 53:53/udp \
@@ -158,8 +180,8 @@ echo "✅ نصب و اجرای ByoSH کامل شد."
 echo "📌 DNS Server روی پورت 53 اجرا شده است."
 echo "📌 آدرس سرور: $PUBIP"
 
-# [10/10] ایجاد پوشه py-api و دانلود main.py
-echo "[10/10] ایجاد پوشه py-api و دانلود main.py..."
+# [9/9] ایجاد پوشه py-api و دانلود main.py
+echo "[9/9] ایجاد پوشه py-api و دانلود main.py..."
 cd ~ || cd /root || cd "$HOME"
 if [ ! -d "py-api" ]; then
   mkdir -p py-api
