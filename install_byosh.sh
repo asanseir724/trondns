@@ -4,27 +4,27 @@ set -e
 
 echo "🚀 شروع نصب ByoSH از سورس ..."
 
-# [1/7] به‌روزرسانی پکیج‌ها
-echo "[1/7] به‌روزرسانی پکیج‌ها..."
+# [1/9] به‌روزرسانی پکیج‌ها
+echo "[1/9] به‌روزرسانی پکیج‌ها..."
 sudo apt update -y && sudo apt upgrade -y
 
-# [2/7] نصب وابستگی‌ها
-echo "[2/7] نصب وابستگی‌ها (Python3, pip, Docker, Git, Curl)..."
+# [2/9] نصب وابستگی‌ها
+echo "[2/9] نصب وابستگی‌ها (Python3, pip, Docker, Git, Curl)..."
 sudo apt install -y python3 python3-pip curl git docker.io
 
 # فعال‌سازی و شروع داکر
 sudo systemctl enable docker
 sudo systemctl start docker
 
-# [3/7] دریافت سورس ByoSH
-echo "[3/7] دریافت سورس ByoSH..."
+# [3/9] دریافت سورس ByoSH
+echo "[3/9] دریافت سورس ByoSH..."
 if [ ! -d "byosh" ]; then
   git clone https://github.com/mosajjal/byosh || { echo "❌ خطا در clone کردن ByoSH"; exit 1; }
 fi
 cd byosh || { echo "❌ خطا: نتوانست به پوشه byosh برود"; exit 1; }
 
-# [4/7] غیرفعال کردن systemd-resolved و سایر سرویس‌های DNS
-echo "[4/7] غیرفعال کردن systemd-resolved و سایر سرویس‌های DNS برای آزاد کردن پورت 53..."
+# [4/9] غیرفعال کردن systemd-resolved و سایر سرویس‌های DNS
+echo "[4/9] غیرفعال کردن systemd-resolved و سایر سرویس‌های DNS برای آزاد کردن پورت 53..."
 # غیرفعال کردن systemd-resolved
 if systemctl is-active --quiet systemd-resolved; then
   sudo systemctl stop systemd-resolved
@@ -47,16 +47,16 @@ sudo rm -f /etc/resolv.conf
 echo "127.0.0.1 $(hostname)" | sudo tee -a /etc/hosts
 echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
 
-# [5/7] اصلاح Dockerfile برای نصب dnslib
-echo "[5/7] اصلاح Dockerfile..."
+# [5/9] اصلاح Dockerfile برای نصب dnslib
+echo "[5/9] اصلاح Dockerfile..."
 if [ ! -f "Dockerfile" ]; then
   echo "⚠️  هشدار: فایل Dockerfile پیدا نشد!"
 else
   sed -i 's|pip3 install --no-cache-dir dnslib|pip3 install --no-cache-dir --break-system-packages dnslib|' Dockerfile || { echo "⚠️  خطا در اصلاح Dockerfile"; }
 fi
 
-# [5.5/7] بررسی و اصلاح پوشه domain برای حذف دامنه‌های EA/FIFA
-echo "[5.5/7] بررسی و اصلاح پوشه domain..."
+# [5.5/9] بررسی و اصلاح پوشه domain برای حذف دامنه‌های EA/FIFA
+echo "[5.5/9] بررسی و اصلاح پوشه domain..."
 if [ -d "domain" ] || [ -d "domine" ]; then
   DOMAIN_DIR=""
   if [ -d "domain" ]; then
@@ -116,20 +116,20 @@ if [ -d "domain" ] || [ -d "domine" ]; then
   fi
 fi
 
-# [5.6/7] اضافه کردن fallback DNS به کد ByoSH (اگر فایل Python وجود دارد)
-echo "[5.6/7] بررسی کد ByoSH برای اضافه کردن fallback..."
+# [5.6/9] اضافه کردن fallback DNS به کد ByoSH (اگر فایل Python وجود دارد)
+echo "[5.6/9] بررسی کد ByoSH برای اضافه کردن fallback..."
 # پیدا کردن فایل‌های Python اصلی
 PYTHON_FILES=$(find . -name "*.py" -type f 2>/dev/null | head -5)
 if [ ! -z "$PYTHON_FILES" ]; then
   echo "📝 فایل‌های Python پیدا شد. برای fallback کامل، ممکن است نیاز به بررسی دستی باشد."
 fi
 
-# [6/7] ساخت ایمیج
-echo "[6/7] ساخت ایمیج سفارشی ByoSH ..."
+# [6/9] ساخت ایمیج
+echo "[6/9] ساخت ایمیج سفارشی ByoSH ..."
 sudo docker build . -t byosh:myown
 
-# [7/7] دریافت IP و تنظیم iptables
-echo "[7/7] دریافت IP و تنظیم iptables..."
+# [7/9] دریافت IP و تنظیم iptables
+echo "[7/9] دریافت IP و تنظیم iptables..."
 echo "لطفاً IP عمومی سرور را وارد کنید:"
 read PUBIP
 
