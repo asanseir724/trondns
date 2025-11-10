@@ -2,15 +2,128 @@
 
 set -e
 
+# تابع برای بررسی وجود قفل dpkg
+check_dpkg_lock() {
+    # روش 1: استفاده از lsof (اگر موجود باشد)
+    if command -v lsof >/dev/null 2>&1; then
+        if sudo lsof /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+           sudo lsof /var/lib/dpkg/lock >/dev/null 2>&1 || \
+           sudo lsof /var/cache/apt/archives/lock >/dev/null 2>&1; then
+            return 0  # قفل وجود دارد
+        fi
+    # روش 2: استفاده از fuser (اگر lsof موجود نباشد)
+    elif command -v fuser >/dev/null 2>&1; then
+        if sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+           sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || \
+           sudo fuser /var/cache/apt/archives/lock >/dev/null 2>&1; then
+            return 0  # قفل وجود دارد
+        fi
+    # روش 3: بررسی وجود فایل قفل (کمتر دقیق)
+    else
+        if [ -f /var/lib/dpkg/lock-frontend ] || [ -f /var/lib/dpkg/lock ] || [ -f /var/cache/apt/archives/lock ]; then
+            return 0  # احتمالاً قفل وجود دارد
+        fi
+    fi
+    return 1  # قفل آزاد است
+}
+
+# تابع برای دریافت PID پروسه‌ای که قفل را نگه داشته
+get_lock_pid() {
+    if command -v lsof >/dev/null 2>&1; then
+        sudo lsof -t /var/lib/dpkg/lock-frontend 2>/dev/null | head -1
+    elif command -v fuser >/dev/null 2>&1; then
+        sudo fuser /var/lib/dpkg/lock-frontend 2>/dev/null | awk '{print $1}' | head -1
+    else
+        ps aux | grep -E "unattended-upgr|apt|dpkg" | grep -v grep | awk '{print $2}' | head -1
+    fi
+}
+
+# تابع برای انتظار برای آزاد شدن قفل dpkg
+wait_for_dpkg_lock() {
+    local timeout=${1:-300}  # پیش‌فرض 5 دقیقه
+    local elapsed=0
+    local check_interval=5
+    
+    echo "🔍 بررسی قفل dpkg..."
+    
+    while [ $elapsed -lt $timeout ]; do
+        # بررسی وجود قفل
+        if ! check_dpkg_lock; then
+            echo "✅ قفل dpkg آزاد شد."
+            return 0
+        fi
+        
+        # نمایش پروسه‌ای که قفل را نگه داشته
+        LOCK_PID=$(get_lock_pid)
+        if [ ! -z "$LOCK_PID" ]; then
+            LOCK_PROC=$(ps -p $LOCK_PID -o comm= 2>/dev/null || echo "unknown")
+            echo "⏳ منتظر آزاد شدن قفل dpkg... (پروسه: $LOCK_PROC, PID: $LOCK_PID) - ${elapsed}s/${timeout}s"
+        else
+            echo "⏳ منتظر آزاد شدن قفل dpkg... - ${elapsed}s/${timeout}s"
+        fi
+        
+        sleep $check_interval
+        elapsed=$((elapsed + check_interval))
+    done
+    
+    echo "❌ خطا: قفل dpkg پس از $timeout ثانیه آزاد نشد."
+    echo "💡 راه حل‌های پیشنهادی:"
+    echo "   1. منتظر بمانید تا unattended-upgrades تمام شود:"
+    echo "      sudo systemctl status unattended-upgrades"
+    echo "   2. یا غیرفعال کنید (موقت):"
+    echo "      sudo systemctl stop unattended-upgrades"
+    echo "      sudo systemctl disable unattended-upgrades"
+    echo "   3. یا دستی قفل را آزاد کنید (خطرناک - فقط در صورت اطمینان):"
+    echo "      sudo killall unattended-upgr"
+    echo "      sudo rm /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock"
+    return 1
+}
+
+# تابع برای اجرای دستورات apt با مدیریت قفل
+run_apt_command() {
+    local cmd="$1"
+    local description="${2:-اجرای دستور apt}"
+    
+    echo "🔧 $description..."
+    
+    # انتظار برای آزاد شدن قفل
+    if ! wait_for_dpkg_lock 300; then
+        echo "⚠️  هشدار: نتوانست برای قفل dpkg منتظر بماند. تلاش برای ادامه..."
+        # اگر کاربر می‌خواهد ادامه دهد، می‌تواند این خط را uncomment کند
+        # return 1
+    fi
+    
+    # اجرای دستور با retry
+    local max_retries=3
+    local retry=0
+    
+    while [ $retry -lt $max_retries ]; do
+        if sudo $cmd; then
+            return 0
+        fi
+        
+        retry=$((retry + 1))
+        if [ $retry -lt $max_retries ]; then
+            echo "⚠️  خطا در اجرای دستور. تلاش مجدد ($retry/$max_retries)..."
+            sleep 5
+            wait_for_dpkg_lock 60  # انتظار کوتاه‌تر برای retry
+        fi
+    done
+    
+    echo "❌ خطا: نتوانست دستور را پس از $max_retries تلاش اجرا کند."
+    return 1
+}
+
 echo "🚀 شروع نصب ByoSH از سورس ..."
 
 # [1/10] به‌روزرسانی پکیج‌ها
 echo "[1/10] به‌روزرسانی پکیج‌ها..."
-sudo apt update -y && sudo apt upgrade -y
+run_apt_command "apt update -y" "به‌روزرسانی لیست پکیج‌ها"
+run_apt_command "apt upgrade -y" "به‌روزرسانی پکیج‌ها"
 
 # [2/10] نصب وابستگی‌ها
 echo "[2/10] نصب وابستگی‌ها (Python3, pip, Docker, Git, Curl)..."
-sudo apt install -y python3 python3-pip curl git docker.io
+run_apt_command "apt install -y python3 python3-pip curl git docker.io" "نصب وابستگی‌ها"
 
 # فعال‌سازی و شروع داکر
 sudo systemctl enable docker
