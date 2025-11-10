@@ -2,128 +2,15 @@
 
 set -e
 
-# تابع برای بررسی وجود قفل dpkg
-check_dpkg_lock() {
-    # روش 1: استفاده از lsof (اگر موجود باشد)
-    if command -v lsof >/dev/null 2>&1; then
-        if sudo lsof /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
-           sudo lsof /var/lib/dpkg/lock >/dev/null 2>&1 || \
-           sudo lsof /var/cache/apt/archives/lock >/dev/null 2>&1; then
-            return 0  # قفل وجود دارد
-        fi
-    # روش 2: استفاده از fuser (اگر lsof موجود نباشد)
-    elif command -v fuser >/dev/null 2>&1; then
-        if sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
-           sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || \
-           sudo fuser /var/cache/apt/archives/lock >/dev/null 2>&1; then
-            return 0  # قفل وجود دارد
-        fi
-    # روش 3: بررسی وجود فایل قفل (کمتر دقیق)
-    else
-        if [ -f /var/lib/dpkg/lock-frontend ] || [ -f /var/lib/dpkg/lock ] || [ -f /var/cache/apt/archives/lock ]; then
-            return 0  # احتمالاً قفل وجود دارد
-        fi
-    fi
-    return 1  # قفل آزاد است
-}
-
-# تابع برای دریافت PID پروسه‌ای که قفل را نگه داشته
-get_lock_pid() {
-    if command -v lsof >/dev/null 2>&1; then
-        sudo lsof -t /var/lib/dpkg/lock-frontend 2>/dev/null | head -1
-    elif command -v fuser >/dev/null 2>&1; then
-        sudo fuser /var/lib/dpkg/lock-frontend 2>/dev/null | awk '{print $1}' | head -1
-    else
-        ps aux | grep -E "unattended-upgr|apt|dpkg" | grep -v grep | awk '{print $2}' | head -1
-    fi
-}
-
-# تابع برای انتظار برای آزاد شدن قفل dpkg
-wait_for_dpkg_lock() {
-    local timeout=${1:-300}  # پیش‌فرض 5 دقیقه
-    local elapsed=0
-    local check_interval=5
-    
-    echo "🔍 بررسی قفل dpkg..."
-    
-    while [ $elapsed -lt $timeout ]; do
-        # بررسی وجود قفل
-        if ! check_dpkg_lock; then
-            echo "✅ قفل dpkg آزاد شد."
-            return 0
-        fi
-        
-        # نمایش پروسه‌ای که قفل را نگه داشته
-        LOCK_PID=$(get_lock_pid)
-        if [ ! -z "$LOCK_PID" ]; then
-            LOCK_PROC=$(ps -p $LOCK_PID -o comm= 2>/dev/null || echo "unknown")
-            echo "⏳ منتظر آزاد شدن قفل dpkg... (پروسه: $LOCK_PROC, PID: $LOCK_PID) - ${elapsed}s/${timeout}s"
-        else
-            echo "⏳ منتظر آزاد شدن قفل dpkg... - ${elapsed}s/${timeout}s"
-        fi
-        
-        sleep $check_interval
-        elapsed=$((elapsed + check_interval))
-    done
-    
-    echo "❌ خطا: قفل dpkg پس از $timeout ثانیه آزاد نشد."
-    echo "💡 راه حل‌های پیشنهادی:"
-    echo "   1. منتظر بمانید تا unattended-upgrades تمام شود:"
-    echo "      sudo systemctl status unattended-upgrades"
-    echo "   2. یا غیرفعال کنید (موقت):"
-    echo "      sudo systemctl stop unattended-upgrades"
-    echo "      sudo systemctl disable unattended-upgrades"
-    echo "   3. یا دستی قفل را آزاد کنید (خطرناک - فقط در صورت اطمینان):"
-    echo "      sudo killall unattended-upgr"
-    echo "      sudo rm /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock"
-    return 1
-}
-
-# تابع برای اجرای دستورات apt با مدیریت قفل
-run_apt_command() {
-    local cmd="$1"
-    local description="${2:-اجرای دستور apt}"
-    
-    echo "🔧 $description..."
-    
-    # انتظار برای آزاد شدن قفل
-    if ! wait_for_dpkg_lock 300; then
-        echo "⚠️  هشدار: نتوانست برای قفل dpkg منتظر بماند. تلاش برای ادامه..."
-        # اگر کاربر می‌خواهد ادامه دهد، می‌تواند این خط را uncomment کند
-        # return 1
-    fi
-    
-    # اجرای دستور با retry
-    local max_retries=3
-    local retry=0
-    
-    while [ $retry -lt $max_retries ]; do
-        if sudo $cmd; then
-            return 0
-        fi
-        
-        retry=$((retry + 1))
-        if [ $retry -lt $max_retries ]; then
-            echo "⚠️  خطا در اجرای دستور. تلاش مجدد ($retry/$max_retries)..."
-            sleep 5
-            wait_for_dpkg_lock 60  # انتظار کوتاه‌تر برای retry
-        fi
-    done
-    
-    echo "❌ خطا: نتوانست دستور را پس از $max_retries تلاش اجرا کند."
-    return 1
-}
-
 echo "🚀 شروع نصب ByoSH از سورس ..."
 
 # [1/10] به‌روزرسانی پکیج‌ها
 echo "[1/10] به‌روزرسانی پکیج‌ها..."
-run_apt_command "apt update -y" "به‌روزرسانی لیست پکیج‌ها"
-run_apt_command "apt upgrade -y" "به‌روزرسانی پکیج‌ها"
+sudo apt update -y && sudo apt upgrade -y
 
 # [2/10] نصب وابستگی‌ها
 echo "[2/10] نصب وابستگی‌ها (Python3, pip, Docker, Git, Curl)..."
-run_apt_command "apt install -y python3 python3-pip curl git docker.io" "نصب وابستگی‌ها"
+sudo apt install -y python3 python3-pip curl git docker.io
 
 # فعال‌سازی و شروع داکر
 sudo systemctl enable docker
@@ -243,8 +130,70 @@ sudo docker build . -t byosh:myown
 
 # [7/10] دریافت IP و تنظیم iptables
 echo "[7/10] دریافت IP و تنظیم iptables..."
-echo "لطفاً IP عمومی سرور را وارد کنید:"
-read PUBIP
+
+# بررسی متغیر محیطی PUBIP (اولویت اول)
+if [[ ! -z "$PUBIP" ]] && [[ "$PUBIP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+  echo "✅ استفاده از IP از متغیر محیطی: $PUBIP"
+else
+  # تلاش برای دریافت خودکار IP عمومی
+  echo "🔍 تلاش برای دریافت خودکار IP عمومی سرور..."
+  AUTO_IP=""
+  if command -v curl &> /dev/null; then
+    AUTO_IP=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || curl -s --max-time 5 https://ifconfig.me 2>/dev/null || curl -s --max-time 5 https://icanhazip.com 2>/dev/null)
+  elif command -v wget &> /dev/null; then
+    AUTO_IP=$(wget -qO- --timeout=5 https://api.ipify.org 2>/dev/null || wget -qO- --timeout=5 https://ifconfig.me 2>/dev/null || wget -qO- --timeout=5 https://icanhazip.com 2>/dev/null)
+  fi
+
+  # بررسی اینکه آیا IP معتبر است
+  if [[ ! -z "$AUTO_IP" ]] && [[ "$AUTO_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    echo "✅ IP عمومی به صورت خودکار دریافت شد: $AUTO_IP"
+    PUBIP="$AUTO_IP"
+    
+    # اگر حالت تعاملی است، از کاربر بپرس
+    if [ -t 0 ]; then
+      echo "💡 اگر این IP صحیح نیست، می‌توانید آن را تغییر دهید."
+      echo "لطفاً IP عمومی سرور را وارد کنید (یا Enter را بزنید برای استفاده از $AUTO_IP):"
+      read -t 30 PUBIP_INPUT || true
+      if [[ ! -z "$PUBIP_INPUT" ]] && [[ "$PUBIP_INPUT" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        PUBIP="$PUBIP_INPUT"
+        echo "✅ IP وارد شده: $PUBIP"
+      else
+        echo "✅ استفاده از IP خودکار: $PUBIP"
+      fi
+    else
+      echo "✅ استفاده از IP خودکار: $PUBIP (حالت غیرتعاملی)"
+    fi
+  else
+    # اگر IP خودکار دریافت نشد
+    if [ -t 0 ]; then
+      # حالت تعاملی - از کاربر بپرس
+      echo "⚠️  نتوانست IP را به صورت خودکار دریافت کند."
+      echo "لطفاً IP عمومی سرور را وارد کنید:"
+      read PUBIP
+      if [[ ! -z "$PUBIP" ]] && [[ "$PUBIP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        echo "✅ IP وارد شده: $PUBIP"
+      else
+        echo "❌ خطا: IP معتبر وارد نشد!"
+        exit 1
+      fi
+    else
+      # حالت غیرتعاملی - خروج با خطا
+      echo "❌ خطا: در حالت غیرتعاملی اجرا می‌شود و IP خودکار دریافت نشد."
+      echo "💡 لطفاً IP را به صورت متغیر محیطی تنظیم کنید:"
+      echo "   export PUBIP=YOUR_SERVER_IP"
+      echo "   یا اسکریپت را در حالت تعاملی اجرا کنید."
+      exit 1
+    fi
+  fi
+fi
+
+# بررسی نهایی IP
+if [[ ! -z "$PUBIP" ]] && [[ "$PUBIP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+  echo "✅ IP نهایی: $PUBIP"
+else
+  echo "❌ خطا: IP معتبر تنظیم نشد!"
+  exit 1
+fi
 
 echo "🔧 حذف قوانین مسدودکننده iptables برای پورت‌های مورد نیاز..."
 sudo iptables -D INPUT -p udp --dport 53 -j DROP 2>/dev/null || true
