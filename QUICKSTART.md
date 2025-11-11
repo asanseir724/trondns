@@ -3,13 +3,13 @@
 ## نصب یک خطی
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/YOUR_USERNAME/trondns/main/install_byosh.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/asanseir724/trondns/main/install_byosh.sh | sudo bash
 ```
 
 یا:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/YOUR_USERNAME/trondns/main/install_byosh.sh | sudo bash
+wget -qO- https://raw.githubusercontent.com/asanseir724/trondns/main/install_byosh.sh | sudo bash
 ```
 
 ## مراحل بعد از نصب
