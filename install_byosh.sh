@@ -4,12 +4,106 @@ set -e
 
 echo "🚀 شروع نصب ByoSH از سورس ..."
 
+# تابع برای انتظار تا قفل dpkg آزاد شود
+wait_for_apt_lock() {
+    local max_wait=${1:-300}  # حداکثر 5 دقیقه (300 ثانیه) به صورت پیش‌فرض
+    local wait_time=0
+    local check_interval=5
+    
+    echo "🔍 بررسی قفل dpkg..."
+    
+    # تابع کمکی برای پیدا کردن PID پروسه قفل
+    find_lock_pid() {
+        local lock_file=$1
+        local pid=""
+        
+        # روش 1: استفاده از lsof (اگر موجود باشد)
+        if command -v lsof >/dev/null 2>&1; then
+            pid=$(sudo lsof "$lock_file" 2>/dev/null | awk 'NR==2 {print $2}')
+        fi
+        
+        # روش 2: استفاده از fuser (اگر lsof کار نکرد)
+        if [ -z "$pid" ] && command -v fuser >/dev/null 2>&1; then
+            pid=$(sudo fuser "$lock_file" 2>/dev/null | awk '{print $1}' | head -1)
+        fi
+        
+        # روش 3: بررسی پروسه‌های apt/dpkg در حال اجرا
+        if [ -z "$pid" ]; then
+            pid=$(pgrep -f "(apt|dpkg)" | head -1)
+        fi
+        
+        echo "$pid"
+    }
+    
+    # تابع کمکی برای بررسی وجود قفل
+    is_locked() {
+        [ -f /var/lib/dpkg/lock-frontend ] || \
+        [ -f /var/lib/dpkg/lock ] || \
+        [ -f /var/cache/apt/archives/lock ]
+    }
+    
+    while [ $wait_time -lt $max_wait ]; do
+        if is_locked; then
+            # پیدا کردن پروسه قفل
+            local lock_pid=""
+            if [ -f /var/lib/dpkg/lock-frontend ]; then
+                lock_pid=$(find_lock_pid /var/lib/dpkg/lock-frontend)
+            elif [ -f /var/lib/dpkg/lock ]; then
+                lock_pid=$(find_lock_pid /var/lib/dpkg/lock)
+            elif [ -f /var/cache/apt/archives/lock ]; then
+                lock_pid=$(find_lock_pid /var/cache/apt/archives/lock)
+            fi
+            
+            if [ ! -z "$lock_pid" ]; then
+                # بررسی اینکه آیا پروسه هنوز در حال اجراست
+                if ps -p $lock_pid > /dev/null 2>&1; then
+                    local proc_name=$(ps -p $lock_pid -o comm= 2>/dev/null || echo "unknown")
+                    echo "⏳ انتظار برای آزاد شدن قفل dpkg (پروسه $lock_pid [$proc_name] در حال اجراست)... ($wait_time/$max_wait ثانیه)"
+                    sleep $check_interval
+                    wait_time=$((wait_time + check_interval))
+                else
+                    echo "🔓 پروسه قفل دیگر در حال اجرا نیست. آزاد کردن قفل..."
+                    sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>/dev/null || true
+                    sudo dpkg --configure -a 2>/dev/null || true
+                    sleep 2
+                    break
+                fi
+            else
+                # قفل وجود دارد اما پروسه پیدا نشد - ممکن است قفل قدیمی باشد
+                echo "🔓 آزاد کردن قفل قدیمی..."
+                sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>/dev/null || true
+                sudo dpkg --configure -a 2>/dev/null || true
+                sleep 2
+                break
+            fi
+        else
+            # قفل آزاد است
+            echo "✅ قفل dpkg آزاد است."
+            break
+        fi
+    done
+    
+    if [ $wait_time -ge $max_wait ]; then
+        echo "❌ خطا: نتوانست قفل dpkg را پس از $max_wait ثانیه آزاد کند."
+        echo "💡 لطفاً دستی بررسی کنید:"
+        echo "   sudo ps aux | grep -E '(apt|dpkg)'"
+        echo "   sudo fuser /var/lib/dpkg/lock-frontend"
+        echo "   سپس پروسه را متوقف کنید یا صبر کنید تا تمام شود."
+        exit 1
+    fi
+    
+    # یک بار دیگر بررسی نهایی
+    sleep 2
+}
+
 # [1/10] به‌روزرسانی پکیج‌ها
 echo "[1/10] به‌روزرسانی پکیج‌ها..."
+wait_for_apt_lock
 sudo apt update -y && sudo apt upgrade -y
 
 # [2/10] نصب وابستگی‌ها
 echo "[2/10] نصب وابستگی‌ها (Python3, pip, Docker, Git, Curl)..."
+wait_for_apt_lock
 sudo apt install -y python3 python3-pip curl git docker.io
 
 # فعال‌سازی و شروع داکر
